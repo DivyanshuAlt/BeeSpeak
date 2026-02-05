@@ -1,7 +1,7 @@
 """Reply generation controller using Gemini.
 
-Uses Gemini API when configured, and safely falls back to an empty reply so
-API contract is always honored.
+Uses Gemini API when configured, and safely falls back to pre-coded human-like
+responses when API calls fail, so API contract is always honored.
 """
 
 from __future__ import annotations
@@ -14,12 +14,45 @@ import urllib.request
 
 from dotenv import load_dotenv
 
+from language.normalize import normalize_text
+from ml.preprocess import preprocess_for_chatbot
+
 
 load_dotenv()
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 FALLBACK_MODELS = ("gemini-2.0-flash", "gemini-2.5-flash")
+
+DEFAULT_TEMPERATURE = 0.5
+DEFAULT_MAX_OUTPUT_TOKENS = 220
+
+FALLBACK_DIALOGUES = {
+    "otp": [
+        "I don't have that right now. Why do you need OTP?",
+        "I never share OTP. What exactly is this for?",
+    ],
+    "upi": [
+        "I don't use that UPI often. Can you explain why you need it?",
+        "Why are you asking for my UPI ID suddenly?",
+    ],
+    "link": [
+        "I can't open links right now. Tell me the issue here itself.",
+        "What is this link for? Please explain first.",
+    ],
+    "payment": [
+        "I can't pay immediately. Please explain the reason clearly.",
+        "Why should I transfer money now?",
+    ],
+    "urgency": [
+        "Okay, but what exactly happened to my account?",
+        "Wait, why is this urgent all of a sudden?",
+    ],
+    "default": [
+        "Can you explain that again in simple words?",
+        "I didn't understand. What do you want me to do exactly?",
+    ],
+}
 
 
 def _debug_enabled() -> bool:
@@ -33,23 +66,65 @@ def _debug_log(message: str) -> None:
 
 def _resolve_api_key() -> str:
     """Support canonical and commonly mistyped env var names."""
-    return (
-        os.getenv("GEMINI_API_KEY", "").strip()
-        or os.getenv("Gemini_API_Key", "").strip()
-    )
+    return os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("Gemini_API_Key", "").strip()
+
+
+def _maybe_normalize(text: str) -> str:
+    if os.getenv("HONEYPOT_USE_NORMALIZATION", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        return text
+
+    try:
+        normalized = normalize_text(text)
+        return normalized if isinstance(normalized, str) and normalized.strip() else text
+    except Exception as exc:
+        _debug_log(f"normalize_text failed: {exc}")
+        return text
+
+
+def _postprocess_reply(reply: str) -> str:
+    cleaned = preprocess_for_chatbot(reply, max_chars=240)
+    if not cleaned:
+        return ""
+
+    if cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
+        cleaned = cleaned[1:-1].strip()
+
+    if cleaned and cleaned[-1].isalnum():
+        cleaned = f"{cleaned}."
+
+    return cleaned
+
+
+def _select_fallback_bucket(latest_text: str) -> str:
+    lower = latest_text.lower()
+    if "otp" in lower:
+        return "otp"
+    if "upi" in lower:
+        return "upi"
+    if "http://" in lower or "https://" in lower or ".com" in lower:
+        return "link"
+    if any(token in lower for token in ("pay", "transfer", "money", "rs", "rupee")):
+        return "payment"
+    if any(token in lower for token in ("urgent", "immediately", "blocked", "suspend")):
+        return "urgency"
+    return "default"
+
+
+def _fallback_reply(conversation_history: list[dict], latest_message: dict) -> str:
+    latest_text = preprocess_for_chatbot(str(latest_message.get("text", "")))
+    bucket = _select_fallback_bucket(latest_text)
+    options = FALLBACK_DIALOGUES.get(bucket, FALLBACK_DIALOGUES["default"])
+    idx = len(conversation_history) % len(options)
+    return options[idx]
 
 
 def _build_prompt(conversation_history: list[dict], latest_message: dict) -> str:
     lines = [
         (
-            "You are a 29–35 year old middle-aged man."
-            "You are mildly curious, cautious but not paranoid."
-            "You get more interested when offers sound too good to be true."
-            "You ask innocent, slightly naive questions."
-            "You never accuse, threaten, or mention scams.Keep the converssation engaging but don't reveal too much about yourself."
-            "You respond like a normal human over SMS. Keep your replies short (1-2 sentences) and casual."
-            "You want to find out more about the offer and the scammer, but you don't want to seem too eager."
-            "dont stop mid sentence or leave the scammer hanging. Always provide a complete reply that encourages the scammer to keep talking."
+            "You are a normal human user chatting with someone who may be a scammer. "
+            "Reply naturally and clearly in 1-2 complete sentences. "
+            "Never stop mid-sentence. Ask at most one clarifying question. "
+            "Do not reveal that you are detecting scams or running any analysis."
         ),
         "",
         "Conversation so far:",
@@ -57,12 +132,13 @@ def _build_prompt(conversation_history: list[dict], latest_message: dict) -> str
 
     for item in conversation_history:
         sender = item.get("sender", "unknown")
-        text = str(item.get("text", "")).strip()
+        text = preprocess_for_chatbot(str(item.get("text", "")))
         if text:
             lines.append(f"{sender}: {text}")
 
     latest_sender = latest_message.get("sender", "scammer")
-    latest_text = str(latest_message.get("text", "")).strip()
+    latest_text = preprocess_for_chatbot(str(latest_message.get("text", "")))
+    latest_text = _maybe_normalize(latest_text)
     if latest_text:
         lines.append(f"{latest_sender}: {latest_text}")
 
@@ -78,8 +154,8 @@ def _call_gemini(*, model: str, api_key: str, prompt: str) -> str:
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.5,
-            "maxOutputTokens": 220,
+            "temperature": float(os.getenv("HONEYPOT_CHAT_TEMPERATURE", str(DEFAULT_TEMPERATURE))),
+            "maxOutputTokens": int(os.getenv("HONEYPOT_CHAT_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS))),
         },
     }
 
@@ -103,18 +179,18 @@ def _call_gemini(*, model: str, api_key: str, prompt: str) -> str:
         reply = "\n".join(chunk for chunk in text_chunks if chunk).strip()
         if not reply:
             _debug_log(f"Empty reply from model={model}; parts={json.dumps(parts)[:300]}")
-        return reply
+        return _postprocess_reply(reply)
 
 
 def generate_reply(conversation_history: list[dict], latest_message: dict) -> str:
     """Return a human-like reply string.
 
-    Falls back to empty string if model config is unavailable or call fails.
+    Falls back to pre-coded text if model config is unavailable or call fails.
     """
     api_key = _resolve_api_key()
     if not api_key:
         _debug_log("Missing GEMINI_API_KEY (or Gemini_API_Key)")
-        return ""
+        return _fallback_reply(conversation_history, latest_message)
 
     configured_model = os.getenv("HONEYPOT_CHAT_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
     prompt = _build_prompt(conversation_history, latest_message)
@@ -134,11 +210,10 @@ def generate_reply(conversation_history: list[dict], latest_message: dict) -> st
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
             _debug_log(f"HTTPError model={model} code={exc.code}: {error_body[:300]}")
-            # Retry with next model only for model-not-found or quota/rate limits.
             if exc.code not in (404, 429):
-                return "can you please explain that again?"
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                return _fallback_reply(conversation_history, latest_message)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
             _debug_log(f"Request error model={model}: {exc}")
-            return ""
+            return _fallback_reply(conversation_history, latest_message)
 
-    return ""
+    return _fallback_reply(conversation_history, latest_message)
