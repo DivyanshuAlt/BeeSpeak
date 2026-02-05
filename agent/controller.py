@@ -1,3 +1,71 @@
+"""Reply generation controller.
+
+Uses an LLM when configured, and safely falls back to an empty reply so
+API contract is always honored.
+"""
+
+from __future__ import annotations
+
+import os
+
+from openai import OpenAI
+
+
+def _build_messages(conversation_history: list[dict], latest_message: dict) -> list[dict]:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a normal human user chatting with someone who may be a scammer. "
+                "Reply naturally, briefly, and contextually. "
+                "Do not reveal that you are detecting scams or running any analysis."
+            ),
+        }
+    ]
+
+    for item in conversation_history:
+        sender = item.get("sender")
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+
+        if sender == "scammer":
+            role = "user"
+        else:
+            role = "assistant"
+
+        messages.append({"role": role, "content": text})
+
+    latest_text = str(latest_message.get("text", "")).strip()
+    if latest_text:
+        latest_role = "user" if latest_message.get("sender") == "scammer" else "assistant"
+        messages.append({"role": latest_role, "content": latest_text})
+
+    return messages
+
+
+def generate_reply(conversation_history: list[dict], latest_message: dict) -> str:
+    """Return a human-like reply string.
+
+    Falls back to empty string if model config is unavailable or call fails.
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return ""
+
+    try:
+        client = OpenAI(api_key=api_key)
+        model = os.getenv("HONEYPOT_CHAT_MODEL", "gpt-4o-mini")
+        completion = client.chat.completions.create(
+            model=model,
+            temperature=0.7,
+            max_tokens=120,
+            messages=_build_messages(conversation_history, latest_message),
+        )
+        reply = completion.choices[0].message.content if completion.choices else ""
+        return (reply or "").strip()
+    except Exception:
+        return ""
 """Reply generation controller using Gemini.
 
 Uses Gemini API when configured, and safely falls back to pre-coded human-like
@@ -121,10 +189,14 @@ def _fallback_reply(conversation_history: list[dict], latest_message: dict) -> s
 def _build_prompt(conversation_history: list[dict], latest_message: dict) -> str:
     lines = [
         (
-            "You are a normal human user chatting with someone who may be a scammer. "
-            "Reply naturally and clearly in 1-2 complete sentences. "
-            "Never stop mid-sentence. Ask at most one clarifying question. "
-            "Do not reveal that you are detecting scams or running any analysis."
+            "You are a 29–35 year old middle-aged man."
+            "You are mildly curious, cautious but not paranoid."
+            "You get more interested when offers sound too good to be true."
+            "You ask innocent, slightly naive questions."
+            "You never accuse, threaten, or mention scams.Keep the converssation engaging but don't reveal too much about yourself."
+            "You respond like a normal human over SMS. Keep your replies short (1-2 sentences) and casual."
+            "You want to find out more about the offer and the scammer, but you don't want to seem too eager."
+            "dont stop mid sentence or leave the scammer hanging. Always provide a complete reply that encourages the scammer to keep talking. example: if scammer says 'your account has been compromised, send us your password to secure it' you might reply 'wait, really? how did that happen? what do i do now??'"
         ),
         "",
         "Conversation so far:",
