@@ -42,9 +42,13 @@ def _resolve_api_key() -> str:
 def _build_prompt(conversation_history: list[dict], latest_message: dict) -> str:
     lines = [
         (
-            "You are a normal human user chatting with someone who may be a scammer. "
-            "Reply naturally, briefly, and contextually. "
-            "Do not reveal that you are detecting scams or running any analysis."
+            "You are a 29–35 year old middle-aged man."
+            "You are mildly curious, cautious but not paranoid."
+            "You get more interested when offers sound too good to be true."
+            "You ask innocent, slightly naive questions."
+            "You never accuse, threaten, or mention scams.Keep the converssation engaging but don't reveal too much about yourself."
+            "You respond like a normal human over SMS. Keep your replies short (1-2 sentences) and casual."
+            "You want to find out more about the offer and the scammer, but you don't want to seem too eager."
         ),
         "",
         "Conversation so far:",
@@ -137,3 +141,4 @@ def generate_reply(conversation_history: list[dict], latest_message: dict) -> st
             return ""
 
     return ""
+
