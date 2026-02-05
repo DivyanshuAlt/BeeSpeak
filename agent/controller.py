@@ -49,6 +49,7 @@ def _build_prompt(conversation_history: list[dict], latest_message: dict) -> str
             "You never accuse, threaten, or mention scams.Keep the converssation engaging but don't reveal too much about yourself."
             "You respond like a normal human over SMS. Keep your replies short (1-2 sentences) and casual."
             "You want to find out more about the offer and the scammer, but you don't want to seem too eager."
+            "dont stop mid sentence or leave the scammer hanging. Always provide a complete reply that encourages the scammer to keep talking."
         ),
         "",
         "Conversation so far:",
@@ -77,8 +78,8 @@ def _call_gemini(*, model: str, api_key: str, prompt: str) -> str:
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 120,
+            "temperature": 0.5,
+            "maxOutputTokens": 220,
         },
     }
 
@@ -135,10 +136,9 @@ def generate_reply(conversation_history: list[dict], latest_message: dict) -> st
             _debug_log(f"HTTPError model={model} code={exc.code}: {error_body[:300]}")
             # Retry with next model only for model-not-found or quota/rate limits.
             if exc.code not in (404, 429):
-                return ""
+                return "can you please explain that again?"
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             _debug_log(f"Request error model={model}: {exc}")
             return ""
 
     return ""
-
