@@ -22,5 +22,13 @@ KEYWORD_CATEGORIES = {
         "share your upi",
         "send money",
         "pay now"
+    ],
+    
+   "CARD_THREAT": [
+        "PAN card block",
+        "card will be blocked",
+        "card blocked"
+        "card suspension"
     ]
 }
+
