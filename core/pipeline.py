@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from agent.controller import generate_reply
 from core.decision import decide
 from core.final_callback import send_final_callback_if_needed
@@ -69,6 +67,19 @@ def _validate_and_extract_metadata(payload: dict) -> dict[str, str]:
     return validated
 
 
+def _build_decision_text(conversation_history: list[dict], latest_text: str) -> str:
+    parts: list[str] = []
+    for entry in conversation_history:
+        text = str(entry.get("text", "")).strip()
+        if text:
+            parts.append(text)
+
+    if latest_text.strip():
+        parts.append(latest_text.strip())
+
+    return "\n".join(parts)
+
+
 def _prepare_rule_text(raw_text: str) -> str:
     return raw_text.strip().lower()
 
@@ -103,11 +114,15 @@ def process_message(payload: dict) -> dict:
     metadata = _validate_and_extract_metadata(payload)
     text = message["text"]
 
-    rule_result = rule_check(_prepare_rule_text(text))
+    decision_text = _build_decision_text(conversation_history, text)
+
+    # Important: decision is now computed over whole conversation text,
+    # not only the latest message.
+    rule_result = rule_check(_prepare_rule_text(decision_text))
 
     ml_result = None
     if rule_result["status"] == "PASS_TO_ML":
-        ml_result = ml_predict(_prepare_ml_text(text), "en")
+        ml_result = ml_predict(_prepare_ml_text(decision_text), "en")
 
     decision = decide(rule_result, ml_result)
 
