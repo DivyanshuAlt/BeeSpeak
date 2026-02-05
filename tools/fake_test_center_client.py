@@ -3,8 +3,6 @@
 Run this in CMD B while fake_test_center_server.py runs in CMD A.
 """
 
-from __future__ import annotations
-
 import json
 import time
 import urllib.error
@@ -12,6 +10,9 @@ import urllib.request
 
 BASE_URL = "http://localhost:8787"
 SESSION_ID = f"local-session-{int(time.time())}"
+
+
+EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", "/done", "done"}
 
 
 def _post(path: str, payload: dict) -> dict:
@@ -25,17 +26,22 @@ def _post(path: str, payload: dict) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
+def _should_exit(text: str) -> bool:
+    return text.strip().lower() in EXIT_COMMANDS
+
+
 def main() -> None:
     print(f"Connected to {BASE_URL}")
     print(f"sessionId={SESSION_ID}")
-    print("Type scammer messages. Type 'exit' to stop and request final JSON.\n")
+    print("Type scammer messages.")
+    print("To finish, type: exit (or /exit, /done, done).\n")
 
     while True:
         text = input("scammer> ").strip()
         if not text:
             continue
 
-        if text.lower() in {"exit", "quit"}:
+        if _should_exit(text):
             try:
                 final_result = _post("/done", {"sessionId": SESSION_ID})
                 print("\nDone. Final JSON from server:")
@@ -43,6 +49,11 @@ def main() -> None:
             except urllib.error.URLError as exc:
                 print(f"could not fetch final JSON from server: {exc}")
             break
+
+        # Avoid accidental slash-commands being sent as scam text.
+        if text.startswith("/"):
+            print("Unknown command. Use normal text, or 'exit'/'/exit' to finish.")
+            continue
 
         try:
             response = _post(
