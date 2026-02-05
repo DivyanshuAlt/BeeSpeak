@@ -4,8 +4,6 @@ Uses Gemini API when configured, and safely falls back to pre-coded human-like
 responses when API calls fail, so API contract is always honored.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import urllib.error
