@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
@@ -9,7 +10,10 @@ from datetime import datetime, timezone
 
 from core.session_storage import get_callback_status, update_callback_status
 
-CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
+CALLBACK_URL = os.getenv(
+    "HONEYPOT_FINAL_CALLBACK_URL",
+    "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
+).strip()
 TIMEOUT_SECONDS = 5
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 1
