@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+openai
+python-dotenv
+indic-transliteration
+googletrans==4.0.2
